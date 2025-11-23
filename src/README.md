@@ -1,6 +1,6 @@
-# Continual Pretraining Experiments
+# MFM Source Code
 
-Modular implementation of continual pretraining experiments for time series forecasting.
+Modular implementation of continual pretraining for time series forecasting.
 
 ## Module Overview
 
@@ -38,7 +38,7 @@ Modular implementation of continual pretraining experiments for time series fore
 
 ### Basic Execution
 ```bash
-cd src/experiments
+cd src
 python main.py
 ```
 

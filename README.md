@@ -9,15 +9,14 @@ MFM/
 ├── data/                           # Datasets (not included in repo)
 │
 ├── src/                           # Source code
-│   └── experiments/               # Experiment modules
-│       ├── __init__.py           # Package initialization
-│       ├── config.py             # Configuration management
-│       ├── utils.py              # Utility functions
-│       ├── datasets.py           # Dataset loaders
-│       ├── trainer.py            # Training functions
-│       ├── evaluator.py          # Evaluation functions
-│       ├── main.py               # Main execution script
-│       └── README.md             # Experiment guide
+│   ├── __init__.py               # Package initialization
+│   ├── config.py                 # Configuration management
+│   ├── utils.py                  # Utility functions
+│   ├── datasets.py               # Dataset loaders
+│   ├── trainer.py                # Training functions
+│   ├── evaluator.py              # Evaluation functions
+│   ├── main.py                   # Main execution script
+│   └── README.md                 # Usage guide
 │
 └── results/                       # Experiment results (not included)
 ```
@@ -30,7 +29,7 @@ Foundation model continual pretraining on manufacturing datasets for improved fo
 
 **Run**:
 ```bash
-cd src/experiments
+cd src
 python main.py
 ```
 
@@ -59,7 +58,7 @@ pip install momentfm
 
 ## Documentation
 
-See [Experiment Guide](src/experiments/README.md) for detailed usage.
+See [Usage Guide](src/README.md) for detailed usage.
 
 ## License
 
