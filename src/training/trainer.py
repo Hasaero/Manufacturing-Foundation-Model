@@ -52,7 +52,15 @@ class LinearWarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
 
 
 def continual_pretrain(model, datasets, config, device, output_dir):
-    """Continual pretraining with masking and reconstruction"""
+    """Continual pretraining with masking and reconstruction
+
+    Follows MOMENT official implementation:
+    - Masked reconstruction task
+    - Linear warmup + Cosine annealing LR scheduler
+    - Mixed precision training (AMP)
+    - Gradient clipping
+    - Domain sequential training (one dataset at a time)
+    """
     print("\n" + "=" * 80)
     print("CONTINUAL PRETRAINING (Masking & Reconstruction)")
     print("=" * 80)
@@ -201,9 +209,19 @@ def continual_pretrain(model, datasets, config, device, output_dir):
                                 optimizer.zero_grad(set_to_none=True)
                                 continue
 
-                            # Calculate loss
-                            loss_per_element = criterion(reconstruction, batch_x_orig)
-                            loss = loss_per_element.mean()
+                            # Calculate masked loss (following MOMENT official implementation)
+                            # Only compute loss on observed (non-masked) regions
+                            recon_loss = criterion(reconstruction, batch_x_orig)
+
+                            # Create observed mask: input_mask * (1 - pretrain_mask)
+                            # Reshape mask from [batch*n_channels, seq_len] to [batch, n_channels, seq_len]
+                            pretrain_mask_reshaped = output.pretrain_mask.reshape(batch_size, n_channels, seq_len)
+                            input_mask_expanded = input_mask.unsqueeze(1).expand(batch_size, n_channels, seq_len)
+                            observed_mask = input_mask_expanded * (1 - pretrain_mask_reshaped)
+
+                            # Apply mask to loss
+                            masked_loss = observed_mask * recon_loss
+                            loss = masked_loss.sum() / (observed_mask.sum() + 1e-7)
 
                             # Check for NaN in loss
                             if torch.isnan(loss) or torch.isinf(loss):
@@ -335,7 +353,14 @@ def continual_pretrain(model, datasets, config, device, output_dir):
 
 
 def train_forecasting(model, train_loader, val_loader, config, device, target_idx, output_dir, model_name="forecasting"):
-    """Fine-tune forecasting head"""
+    """Fine-tune forecasting head
+
+    Follows MOMENT official implementation:
+    - OneCycleLR scheduler
+    - Mixed precision training (AMP)
+    - Gradient clipping
+    - Early stopping based on validation loss
+    """
     print("\n" + "=" * 80)
     print("FORECASTING FINE-TUNING")
     print("=" * 80)

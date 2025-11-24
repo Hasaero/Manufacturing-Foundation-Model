@@ -93,7 +93,7 @@ class Dataset_Custom(Dataset):
         df_stamp['hour'] = df_stamp.TimeStamp.apply(lambda row: row.hour, 1)
         df_stamp['minute'] = df_stamp.TimeStamp.apply(lambda row: row.minute, 1)
         df_stamp['minute'] = df_stamp.minute.map(lambda x: x // self.minute_interval)
-        data_stamp = df_stamp.drop(columns=['TimeStamp'], axis=1).values
+        data_stamp = df_stamp.drop(columns=['TimeStamp'], axis=1).values # 시간정보도 함께
 
         self.data_x = data[border1:border2]
         self.data_y = data[border1:border2]
@@ -123,8 +123,8 @@ class Dataset_Custom(Dataset):
         return len(self.using_index_list)
 
     def get_using_index(self):
-        """연속된 시간 구간이며(outlier 없고), 
-        seq_len + pred_len 만큼의 길이를 만족하는 경우의 인덱스 리스트 반환"""
+        """연속된 시간 구간이며 (outlier 없고), 
+        seq_len + pred_len 만큼의 길이를 만족하는 끝 index 반환"""
         index_list = []
         for i in range((self.seq_len + self.pred_len), len(self.data)):
             temp = self.data.iloc[i - self.seq_len - self.pred_len:i]
@@ -195,6 +195,7 @@ class MOMENTDatasetWrapper(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, index):
+        # MOMENT 는 time stamp embedding 사용하지 않음
         seq_x, seq_y, seq_x_mark, seq_y_mark = self.dataset[index]
 
         # seq_x: [seq_len, n_features]

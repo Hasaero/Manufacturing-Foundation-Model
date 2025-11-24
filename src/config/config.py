@@ -15,12 +15,12 @@ DEFAULT_CONFIG = {
     "target_column": "SATURATOR_ML_SUPPLY_F_PV.Value",
 
     # Model settings
-    "model_name": "AutonLab/MOMENT-1-large",
+    "model_name": "AutonLab/MOMENT-1-base",
     "context_length": 512,
     "forecast_horizon": 6,
 
     # Continual pretraining settings (MOMENT official settings)
-    "pretrain_epochs": 50,
+    "pretrain_epochs": 10,
     "pretrain_batch_size": 64,
     "pretrain_lr": 1e-4,  # init_lr
     "pretrain_min_lr": 1e-5,  # min_lr
