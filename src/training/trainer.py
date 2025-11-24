@@ -169,7 +169,11 @@ def continual_pretrain(model, datasets, config, device, output_dir):
                     )):
                         try:
                             batch_x = batch_x.float().to(device)
-                            input_mask = input_mask.to(device)
+                            input_mask = input_mask.long().to(device)  # Ensure int64 dtype
+
+                            # Override input_mask if set_input_mask is False (MOMENT official pattern)
+                            if not config.get('set_input_mask', True):
+                                input_mask = torch.ones_like(input_mask)
 
                             # Clip input values to prevent extreme values BEFORE any processing
                             batch_x = torch.clamp(batch_x, -10.0, 10.0)
@@ -219,9 +223,9 @@ def continual_pretrain(model, datasets, config, device, output_dir):
                             input_mask_expanded = input_mask.unsqueeze(1).expand(batch_size, n_channels, seq_len)
                             observed_mask = input_mask_expanded * (1 - pretrain_mask_reshaped)
 
-                            # Apply mask to loss
+                            # Apply mask to loss (use nansum to ignore NaN values)
                             masked_loss = observed_mask * recon_loss
-                            loss = masked_loss.sum() / (observed_mask.sum() + 1e-7)
+                            loss = masked_loss.nansum() / (observed_mask.nansum() + 1e-7)
 
                             # Check for NaN in loss
                             if torch.isnan(loss) or torch.isinf(loss):
@@ -405,6 +409,47 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
     best_val_loss = float('inf')
     best_model_state = None
     oom_count = 0
+    opt_steps = 0  # Global step counter (MOMENT official pattern)
+
+    # Evaluate model before training (MOMENT official pattern)
+    print("\n" + "-" * 80)
+    print("INITIAL EVALUATION (Before Fine-tuning)")
+    print("-" * 80)
+    model.eval()
+    initial_val_losses = []
+    with torch.no_grad():
+        for batch_idx, (timeseries, forecast, input_mask) in enumerate(tqdm(
+            val_loader,
+            desc="Initial Validation"
+        )):
+            try:
+                timeseries = timeseries.float().to(device)
+                input_mask = input_mask.long().to(device)
+                forecast = forecast.float().to(device)
+
+                if not config.get('set_input_mask', True):
+                    input_mask = torch.ones_like(input_mask)
+
+                with torch.cuda.amp.autocast():
+                    output = model(x_enc=timeseries, input_mask=input_mask)
+
+                loss = criterion(output.forecast, forecast)
+                initial_val_losses.append(loss.item())
+
+                del timeseries, input_mask, forecast, output, loss
+
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    print(f"\n  WARNING: OOM in initial validation. Skipping batch...")
+                    clear_memory()
+                    continue
+                else:
+                    raise e
+
+    initial_val_loss = np.mean(initial_val_losses) if initial_val_losses else float('inf')
+    print(f"Initial Validation Loss: {initial_val_loss:.6f}")
+    print("-" * 80 + "\n")
+    clear_memory()
 
     for epoch in range(config['finetune_epochs']):
         # Training
@@ -421,8 +466,12 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                     optimizer.zero_grad(set_to_none=True)
 
                 timeseries = timeseries.float().to(device)
-                input_mask = input_mask.to(device)
+                input_mask = input_mask.long().to(device)  # Ensure int64 dtype
                 forecast = forecast.float().to(device)
+
+                # Override input_mask if set_input_mask is False (MOMENT official pattern)
+                if not config.get('set_input_mask', True):
+                    input_mask = torch.ones_like(input_mask)
 
                 with torch.cuda.amp.autocast():
                     output = model(x_enc=timeseries, input_mask=input_mask)
@@ -442,6 +491,7 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                     scaler.step(optimizer)
                     scaler.update()
                     scheduler.step()
+                    opt_steps += 1  # Increment global step counter
 
                 train_losses.append(loss.item() * accumulation_steps)
 
@@ -459,6 +509,7 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                     raise e
 
         train_loss = np.mean(train_losses) if train_losses else 0.0
+        current_lr = optimizer.param_groups[0]['lr']
 
         # Validation
         model.eval()
@@ -471,7 +522,7 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
             )):
                 try:
                     timeseries = timeseries.float().to(device)
-                    input_mask = input_mask.to(device)
+                    input_mask = input_mask.long().to(device)  # Ensure int64 dtype
                     forecast = forecast.float().to(device)
 
                     with torch.cuda.amp.autocast():
@@ -496,9 +547,10 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
 
         val_loss = np.mean(val_losses) if val_losses else float('inf')
 
-        print(f"\nEpoch {epoch+1}/{config['finetune_epochs']}:")
+        print(f"\nEpoch {epoch+1}/{config['finetune_epochs']} (Step {opt_steps}):")
         print(f"  Train Loss: {train_loss:.6f}")
         print(f"  Val Loss:   {val_loss:.6f}")
+        print(f"  LR:         {current_lr:.6e}")
 
         if oom_count > 0:
             print(f"  OOM events this epoch: {oom_count}")
