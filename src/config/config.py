@@ -8,7 +8,7 @@ from typing import Dict, Any
 
 
 DEFAULT_CONFIG = {
-    "seed": 13,
+    "seed": 14,
     "data_dir": "/home/juyoung_ha/MFM/data",
     "samyang_file": "SAMYANG_dataset.csv",
     "pretrain_files": ["ai4i2020.csv", "IoT.csv", "Steel_industry_downsampled.csv"],

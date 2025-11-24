@@ -384,13 +384,17 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
     )
 
     print(f"\nFine-tuning Configuration (MOMENT Official Settings):")
+    print(f"  Epochs: {config['finetune_epochs']}")
+    print(f"  Batch Size: {config['finetune_batch_size']}")
+    print(f"  Total Steps: {total_steps:,}")
     print(f"  Initial LR: {config['finetune_lr']}")
     print(f"  LR Scheduler: {config.get('finetune_lr_scheduler', 'onecyclelr')}")
     print(f"  PCT Start: {pct_start}")
-    print(f"  Epochs: {config['finetune_epochs']}")
-    print(f"  Total Steps: {total_steps:,}")
     print(f"  Weight Decay: {config.get('weight_decay', 0.01)}")
     print(f"  Head Dropout: {config.get('head_dropout', 0.1)}")
+    print(f"  Freeze Encoder: {config.get('freeze_encoder', True)}")
+    print(f"  Freeze Embedder: {config.get('freeze_embedder', True)}")
+    print(f"\n  Loss: Multi-variable (all channels) following MOMENT official implementation")
 
     # Mixed precision
     scaler = torch.cuda.amp.GradScaler()
@@ -412,6 +416,10 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
             desc=f"Epoch {epoch+1}/{config['finetune_epochs']} [Train]"
         )):
             try:
+                # Zero gradients at the start (MOMENT official pattern)
+                if batch_idx % accumulation_steps == 0:
+                    optimizer.zero_grad(set_to_none=True)
+
                 timeseries = timeseries.float().to(device)
                 input_mask = input_mask.to(device)
                 forecast = forecast.float().to(device)
@@ -419,11 +427,8 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                 with torch.cuda.amp.autocast():
                     output = model(x_enc=timeseries, input_mask=input_mask)
 
-                # Calculate loss only on target variable
-                loss = criterion(
-                    output.forecast[:, target_idx:target_idx+1, :],
-                    forecast[:, target_idx:target_idx+1, :]
-                )
+                # Calculate loss on all variables (following MOMENT official implementation)
+                loss = criterion(output.forecast, forecast)
 
                 # Scale for gradient accumulation
                 loss = loss / accumulation_steps
@@ -436,7 +441,6 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
                     scaler.step(optimizer)
                     scaler.update()
-                    optimizer.zero_grad(set_to_none=True)
                     scheduler.step()
 
                 train_losses.append(loss.item() * accumulation_steps)
@@ -447,9 +451,9 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
             except RuntimeError as e:
                 if "out of memory" in str(e):
                     print(f"\n  WARNING: OOM in training batch {batch_idx}. Skipping batch...")
+                    optimizer.zero_grad(set_to_none=True)
                     clear_memory()
                     oom_count += 1
-                    optimizer.zero_grad(set_to_none=True)
                     continue
                 else:
                     raise e
@@ -473,10 +477,8 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
                     with torch.cuda.amp.autocast():
                         output = model(x_enc=timeseries, input_mask=input_mask)
 
-                    loss = criterion(
-                        output.forecast[:, target_idx:target_idx+1, :],
-                        forecast[:, target_idx:target_idx+1, :]
-                    )
+                    # Calculate loss on all variables (following MOMENT official implementation)
+                    loss = criterion(output.forecast, forecast)
 
                     val_losses.append(loss.item())
 
