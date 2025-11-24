@@ -11,27 +11,35 @@ DEFAULT_CONFIG = {
     "seed": 13,
     "data_dir": "/home/juyoung_ha/MFM/data",
     "samyang_file": "SAMYANG_dataset.csv",
-    "pretrain_files": ["ai4i2020.csv", "IoT.csv", "Steel_industry.csv"],
+    "pretrain_files": ["ai4i2020.csv", "IoT.csv", "Steel_industry_downsampled.csv"],
     "target_column": "SATURATOR_ML_SUPPLY_F_PV.Value",
 
     # Model settings
-    "model_name": "AutonLab/MOMENT-1-base",
+    "model_name": "AutonLab/MOMENT-1-large",
     "context_length": 512,
     "forecast_horizon": 6,
 
-    # Continual pretraining settings
-    "pretrain_epochs": 3,
-    "pretrain_batch_size": 32,
-    "pretrain_lr": 1e-4,
-    "pretrain_weight_decay": 0.1,
-    "pretrain_warmup_steps": 0,
+    # Continual pretraining settings (MOMENT official settings)
+    "pretrain_epochs": 50,
+    "pretrain_batch_size": 64,
+    "pretrain_lr": 1e-4,  # init_lr
+    "pretrain_min_lr": 1e-5,  # min_lr
+    "pretrain_warmup_lr": 1e-5,  # warmup_lr
+    "pretrain_weight_decay": 0.05,
+    "pretrain_warmup_steps": 1000,
+    "pretrain_lr_decay_rate": 0.9,
+    "pretrain_lr_scheduler": "linearwarmupcosinelr",
     "pretrain_grad_clip": 0.5,
+    "pretrain_use_amp": True,  # Automatic Mixed Precision
+    "pretrain_max_opt_steps": 5000000,
     "mask_ratio": 0.3,
 
-    # Forecasting fine-tuning settings
-    "finetune_epochs": 3,
+    # Forecasting fine-tuning settings (MOMENT official settings)
+    "finetune_epochs": 5,
     "finetune_batch_size": 32,
-    "finetune_lr": 1e-4,
+    "finetune_lr": 5e-5,  # init_lr
+    "finetune_lr_scheduler": "onecyclelr",
+    "finetune_pct_start": 0.3,  # Percentage of cycle spent increasing LR
     "head_dropout": 0.1,
     "weight_decay": 0.01,
     "freeze_encoder": True,

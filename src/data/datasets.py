@@ -2,25 +2,22 @@
 Dataset classes and data loading functions for continual pretraining experiments.
 """
 
-import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
 
-# ============================================================================
-# Dataset_Custom (imported from models/utils/custom_dataset.py)
-# ============================================================================
-
 from datetime import timedelta
 
 
 class Dataset_Custom(Dataset):
-    """Custom dataset with time continuity validation and outlier filtering"""
+    """
+    custom_dataset.py 에서 복사 (UNIST)
+    """
 
     def __init__(self, data, flag, configs, scale=True):
         self.seq_len = configs.seq_len
@@ -126,7 +123,8 @@ class Dataset_Custom(Dataset):
         return len(self.using_index_list)
 
     def get_using_index(self):
-        """Get valid sequence indices with time continuity check and outlier filtering"""
+        """연속된 시간 구간이며(outlier 없고), 
+        seq_len + pred_len 만큼의 길이를 만족하는 경우의 인덱스 리스트 반환"""
         index_list = []
         for i in range((self.seq_len + self.pred_len), len(self.data)):
             temp = self.data.iloc[i - self.seq_len - self.pred_len:i]
@@ -144,14 +142,15 @@ class Dataset_Custom(Dataset):
 
 
 class PretrainDataset(Dataset):
-    """Dataset for continual pretraining with reconstruction task"""
+    """Dataset for continual pretraining with reconstruction task
+
+    Note: Input data is already normalized by load_manufacturing_data()
+    """
 
     def __init__(self, data, context_length=512):
         self.context_length = context_length
-
-        # Normalize data
-        self.scaler = StandardScaler()
-        self.data = self.scaler.fit_transform(data)
+        # Data is already normalized, no need to normalize again
+        self.data = data
 
     def __len__(self):
         return max(1, len(self.data) - self.context_length + 1)
@@ -161,7 +160,7 @@ class PretrainDataset(Dataset):
         end_idx = min(idx + self.context_length, len(self.data))
         context = self.data[idx:end_idx]
 
-        # Pad if needed
+        # 부족하면 패딩
         if len(context) < self.context_length:
             pad_length = self.context_length - len(context)
             context = np.pad(context, ((0, pad_length), (0, 0)), mode='edge')
@@ -169,19 +168,18 @@ class PretrainDataset(Dataset):
         # Transpose to [n_channels, seq_len] format
         context = torch.FloatTensor(context.T)
 
-        # Create input mask (all ones - no masking for padding in this simple version)
+        # Create input mask (all valid for now, padding handled by edge mode)
         input_mask = torch.ones(self.context_length)
 
         return context, input_mask
 
 
 class MOMENTDatasetWrapper(Dataset):
-    """Wrapper to convert Dataset_Custom output to MOMENT format
+    """MOMENT 에 맞게 Dataset_Custom 래핑
 
     Dataset_Custom returns: (seq_x, seq_y, seq_x_mark, seq_y_mark)
     MOMENT expects: (context, forecast, input_mask)
 
-    where:
     - context: [n_channels, seq_len]
     - forecast: [n_channels, pred_len]
     - input_mask: [seq_len]
@@ -276,6 +274,10 @@ def create_moment_dataloader(df, flag, config, shuffle=False, drop_last=True):
 def load_manufacturing_data(data_dir, pretrain_files) -> List[np.ndarray]:
     """Load and concatenate manufacturing datasets for continual pretraining
 
+    Only keeps variables with meaningful temporal patterns for MOMENT's
+    channel-independent architecture. Excludes binary labels, constant features,
+    and low-cardinality variables.
+
     Args:
         data_dir: Directory containing data files
         pretrain_files: List of file names to load
@@ -283,6 +285,30 @@ def load_manufacturing_data(data_dir, pretrain_files) -> List[np.ndarray]:
     Returns:
         List of preprocessed numpy arrays
     """
+    # Pretrain 데이터에서 유지할 컬럼들 -> 의미있는 시계열 특성들 (Numeric only)
+    STEEL_COLUMNS = [
+        'Usage_kWh',
+        'Lagging_Current_Reactive.Power_kVarh',
+        'Lagging_Current_Power_Factor'
+    ]
+
+    KEEP_COLUMNS = {
+        'ai4i2020.csv': [
+            'Air temperature [K]',
+            'Process temperature [K]',
+            'Rotational speed [rpm]',
+            'Torque [Nm]',
+            'Tool wear [min]'
+        ],
+        'IoT.csv': [
+            'Vibration (mm/s)',
+            'Temperature (°C)',
+            'Pressure (bar)'
+        ],
+        'Steel_industry.csv': STEEL_COLUMNS,
+        'Steel_industry_downsampled.csv': STEEL_COLUMNS
+    } # Steel_industry 는 데이터가 너무 많아 downsampled 버전 사용
+
     all_data = []
 
     for file_name in pretrain_files:
@@ -291,9 +317,23 @@ def load_manufacturing_data(data_dir, pretrain_files) -> List[np.ndarray]:
 
         df = pd.read_csv(file_path)
 
-        # Remove timestamp/date columns and non-numeric columns
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        data = df[numeric_cols].values.astype(np.float32)
+        # Select only the columns we want to keep
+        if file_name in KEEP_COLUMNS:
+            selected_cols = KEEP_COLUMNS[file_name]
+            # Check if all columns exist
+            missing_cols = [col for col in selected_cols if col not in df.columns]
+            if missing_cols:
+                print(f"  Warning: Missing columns {missing_cols}, using all numeric columns instead")
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                data = df[numeric_cols].values.astype(np.float32)
+            else:
+                data = df[selected_cols].values.astype(np.float32)
+                print(f"  Selected {len(selected_cols)} temporal features: {selected_cols}")
+        else:
+            # Fallback: use all numeric columns
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            data = df[numeric_cols].values.astype(np.float32)
+            print(f"  Using all {len(numeric_cols)} numeric columns")
 
         # Remove any NaN or inf values
         mask = np.isfinite(data).all(axis=1)
@@ -306,7 +346,7 @@ def load_manufacturing_data(data_dir, pretrain_files) -> List[np.ndarray]:
         data_std = np.where(data_std == 0, 1.0, data_std)  # Prevent division by zero
         data = (data - data_mean) / data_std
 
-        print(f"  Shape: {data.shape}, Features: {len(numeric_cols)}")
+        print(f"  Shape: {data.shape}, Features: {data.shape[1]}")
         print(f"  Data range after normalization: [{data.min():.4f}, {data.max():.4f}]")
         all_data.append(data)
 

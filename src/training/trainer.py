@@ -8,15 +8,47 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import OneCycleLR
 from tqdm import tqdm
 from pathlib import Path
+import math
 
 from momentfm.utils.masking import Masking
 
-from datasets import PretrainDataset
+from data import PretrainDataset
 from utils import (
     clear_memory,
     print_memory_stats,
     save_checkpoint
 )
+
+
+class LinearWarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
+    """
+    Linear warmup followed by cosine annealing learning rate scheduler.
+
+    Args:
+        optimizer: Wrapped optimizer
+        warmup_steps: Number of steps for linear warmup
+        max_steps: Total number of training steps
+        warmup_start_lr: Initial learning rate at start of warmup
+        eta_min: Minimum learning rate
+    """
+    def __init__(self, optimizer, warmup_steps, max_steps, warmup_start_lr=1e-5, eta_min=1e-5, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
+        self.warmup_start_lr = warmup_start_lr
+        self.eta_min = eta_min
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        if self.last_epoch < self.warmup_steps:
+            # Linear warmup
+            alpha = self.last_epoch / self.warmup_steps
+            return [self.warmup_start_lr + (base_lr - self.warmup_start_lr) * alpha
+                    for base_lr in self.base_lrs]
+        else:
+            # Cosine annealing
+            progress = (self.last_epoch - self.warmup_steps) / (self.max_steps - self.warmup_steps)
+            return [self.eta_min + (base_lr - self.eta_min) * 0.5 * (1 + math.cos(math.pi * progress))
+                    for base_lr in self.base_lrs]
 
 
 def continual_pretrain(model, datasets, config, device, output_dir):
@@ -31,25 +63,41 @@ def continual_pretrain(model, datasets, config, device, output_dir):
     # Set model to reconstruction mode if not already
     model.train()
 
-    # Setup optimizer with strong weight decay for regularization
+    # Setup optimizer with MOMENT official settings
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config['pretrain_lr'],
-        weight_decay=config.get('pretrain_weight_decay', 0.1)  # Strong regularization
+        weight_decay=config.get('pretrain_weight_decay', 0.05)
     )
     criterion = torch.nn.MSELoss(reduction='none')
 
     # Setup masking
     mask_generator = Masking(mask_ratio=config['mask_ratio'])
 
-    # Setup learning rate scheduler (constant LR, no warmup or annealing)
-    total_datasets = len(datasets)
-    warmup_steps = config.get('pretrain_warmup_steps', 0)  # No warmup
+    # Calculate total training steps for scheduler
+    total_samples = sum(len(d) for d in datasets)
+    steps_per_epoch = total_samples // config['pretrain_batch_size']
+    total_steps = steps_per_epoch * config['pretrain_epochs']
+    max_steps = min(total_steps, config.get('pretrain_max_opt_steps', 5000000))
+
+    # Setup learning rate scheduler: Linear Warmup + Cosine Annealing
+    warmup_steps = config.get('pretrain_warmup_steps', 1000)
+    warmup_lr = config.get('pretrain_warmup_lr', 1e-5)
+    min_lr = config.get('pretrain_min_lr', 1e-5)
+
+    scheduler = LinearWarmupCosineAnnealingLR(
+        optimizer,
+        warmup_steps=warmup_steps,
+        max_steps=max_steps,
+        warmup_start_lr=warmup_lr,
+        eta_min=min_lr
+    )
 
     global_step = 0  # Track global training steps
 
-    # Mixed precision
-    scaler = torch.cuda.amp.GradScaler()
+    # Mixed precision (AMP)
+    use_amp = config.get('pretrain_use_amp', True)
+    scaler = torch.cuda.amp.GradScaler() if use_amp else None
 
     # Gradient accumulation
     accumulation_steps = config.get('gradient_accumulation_steps', 1)
@@ -61,11 +109,17 @@ def continual_pretrain(model, datasets, config, device, output_dir):
     # Get gradient clipping value
     grad_clip = config.get('pretrain_grad_clip', 0.5)
 
-    print(f"Continual Pretraining Configuration:")
-    print(f"  LR: {config['pretrain_lr']}")
-    print(f"  Weight Decay: {config.get('pretrain_weight_decay', 0.1)}")
+    print(f"Continual Pretraining Configuration (MOMENT Official Settings):")
+    print(f"  Initial LR: {config['pretrain_lr']}")
+    print(f"  Min LR: {min_lr}")
+    print(f"  Warmup LR: {warmup_lr}")
     print(f"  Warmup Steps: {warmup_steps}")
+    print(f"  Total Steps: {total_steps:,}")
+    print(f"  Max Steps: {max_steps:,}")
+    print(f"  Weight Decay: {config.get('pretrain_weight_decay', 0.05)}")
     print(f"  Gradient Clipping: {grad_clip}")
+    print(f"  LR Scheduler: {config.get('pretrain_lr_scheduler', 'linearwarmupcosinelr')}")
+    print(f"  Use AMP: {use_amp}")
     print(f"  Epochs per Dataset: {config['pretrain_epochs']}")
     print(f"  Total Datasets: {len(datasets)}")
     print(f"\n  Training Order: Domain Sequential (Dataset 1 → Dataset 2 → Dataset 3)")
@@ -160,15 +214,20 @@ def continual_pretrain(model, datasets, config, device, output_dir):
                             # Scale loss for gradient accumulation
                             loss = loss / accumulation_steps
 
-                            # Backward pass without mixed precision
-                            loss.backward()
+                            # Backward pass with optional mixed precision
+                            if use_amp and scaler is not None:
+                                scaler.scale(loss).backward()
+                            else:
+                                loss.backward()
 
                             # Update weights every accumulation_steps
                             if (batch_idx + 1) % accumulation_steps == 0:
-                                # Use constant learning rate (no scheduling)
-                                current_lr = config['pretrain_lr']
+                                # Get current learning rate
+                                current_lr = optimizer.param_groups[0]['lr']
 
-                                # Stronger gradient clipping
+                                # Gradient clipping
+                                if use_amp and scaler is not None:
+                                    scaler.unscale_(optimizer)
                                 grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
 
                                 # Check for exploding gradients or NaN gradients
@@ -180,7 +239,15 @@ def continual_pretrain(model, datasets, config, device, output_dir):
                                 if grad_norm > 5.0:
                                     print(f"\n    WARNING: Large gradient norm detected: {grad_norm:.2f} (LR: {current_lr:.6f})")
 
-                                optimizer.step()
+                                # Optimizer step with optional AMP scaling
+                                if use_amp and scaler is not None:
+                                    scaler.step(optimizer)
+                                    scaler.update()
+                                else:
+                                    optimizer.step()
+
+                                # Update learning rate scheduler
+                                scheduler.step()
                                 global_step += 1  # Increment global step
 
                                 # Check if model parameters became NaN after update
@@ -277,17 +344,28 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
 
     model.train()
 
-    # Setup optimizer and scheduler
+    # Setup optimizer and scheduler (MOMENT official settings)
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=config['finetune_lr'])
 
     total_steps = len(train_loader) * config['finetune_epochs']
+    pct_start = config.get('finetune_pct_start', 0.3)
+
     scheduler = OneCycleLR(
         optimizer,
         max_lr=config['finetune_lr'],
         total_steps=total_steps,
-        pct_start=0.3
+        pct_start=pct_start
     )
+
+    print(f"\nFine-tuning Configuration (MOMENT Official Settings):")
+    print(f"  Initial LR: {config['finetune_lr']}")
+    print(f"  LR Scheduler: {config.get('finetune_lr_scheduler', 'onecyclelr')}")
+    print(f"  PCT Start: {pct_start}")
+    print(f"  Epochs: {config['finetune_epochs']}")
+    print(f"  Total Steps: {total_steps:,}")
+    print(f"  Weight Decay: {config.get('weight_decay', 0.01)}")
+    print(f"  Head Dropout: {config.get('head_dropout', 0.1)}")
 
     # Mixed precision
     scaler = torch.cuda.amp.GradScaler()

@@ -17,9 +17,8 @@ from momentfm import MOMENTPipeline
 from momentfm.utils.utils import control_randomness
 
 from config import parse_args, load_config
-from datasets import load_manufacturing_data, load_samyang_data, create_moment_dataloader
-from trainer import continual_pretrain, train_forecasting
-from evaluator import evaluate_forecasting
+from data import load_manufacturing_data, load_samyang_data, create_moment_dataloader
+from training import continual_pretrain, train_forecasting, evaluate_forecasting
 from utils import print_memory_stats, safe_save_model, clear_memory
 
 
@@ -182,10 +181,9 @@ def main():
         output_dir
     )
 
-    # Save continual pretrained weights
+    # contiual pretrain 모델 가중치 저장
     safe_save_model(pretrain_model, output_dir / "continual_pretrained_weights.pt", "Continual pretrained model")
 
-    # Convert to forecasting mode
     continual_model = MOMENTPipeline.from_pretrained(
         config['model_name'],
         model_kwargs={
@@ -256,6 +254,15 @@ def main():
     print("COMPARISON: BASELINE vs CONTINUAL PRETRAINED")
     print("=" * 80)
 
+    # Convert numpy types to Python native types for JSON serialization
+    def convert_to_native(obj):
+        """Convert numpy types to Python native types"""
+        if isinstance(obj, dict):
+            return {k: convert_to_native(v) for k, v in obj.items()}
+        elif isinstance(obj, (np.integer, np.floating)):
+            return float(obj)
+        return obj
+
     comparison = {
         'Baseline': baseline_metrics,
         'Continual': continual_metrics,
@@ -273,9 +280,10 @@ def main():
             else:
                 print(f"  {metric}: {value:.6f}")
 
-    # Save metrics
+    # Save metrics (convert numpy types to native Python types)
+    comparison_serializable = convert_to_native(comparison)
     with open(output_dir / "metrics.json", 'w') as f:
-        json.dump(comparison, f, indent=2)
+        json.dump(comparison_serializable, f, indent=2)
 
     # Visualizations
     if baseline_preds is not None and continual_preds is not None:
