@@ -8,17 +8,20 @@ Time series forecasting with continual learning for manufacturing data.
 MFM/
 ├── data/                           # Datasets (not included in repo)
 │
-├── src/                           # Source code
-│   ├── __init__.py               # Package initialization
-│   ├── config.py                 # Configuration management
-│   ├── utils.py                  # Utility functions
-│   ├── datasets.py               # Dataset loaders
-│   ├── trainer.py                # Training functions
-│   ├── evaluator.py              # Evaluation functions
-│   ├── main.py                   # Main execution script
-│   └── README.md                 # Usage guide
+├── src/                            # Source code
+│   ├── config/                     # Configuration management
+│   ├── data/                       # Data loading utilities
+│   ├── training/                   # Training & evaluation
+│   ├── utils/                      # Utility functions
+│   └── main.py                     # Main entry point
 │
-└── results/                       # Experiment results (not included)
+├── visualization/                  # Visualization scripts
+│   ├── visualize_cl_metrics.py     # Continual learning metrics
+│   ├── visualize_predictions.py    # Prediction plots
+│   ├── visualize_soft_masking.py   # Soft-masking analysis
+│   └── compare_experiments.py      # Cross-experiment comparison
+│
+└── results/                        # Experiment results (not included)
 ```
 
 ## Experiments
@@ -38,9 +41,10 @@ python main.py
 ## Features
 
 - **Modular Architecture**: Clean separation of config, data, training, and evaluation
-- **Continual Learning**: Domain sequential pretraining approach
+- **Continual Learning**: Soft-masking based approach to prevent catastrophic forgetting
 - **Time Series**: Custom dataset with temporal continuity validation
 - **Foundation Model**: Based on MOMENT architecture
+- **Visualization**: CL metrics, predictions, and experiment comparison tools
 
 ## Technical Stack
 
@@ -52,13 +56,9 @@ python main.py
 ## Requirements
 
 ```bash
-pip install torch numpy pandas scikit-learn matplotlib tqdm
+pip install torch numpy pandas scikit-learn matplotlib seaborn tqdm
 pip install momentfm
 ```
-
-## Documentation
-
-See [Usage Guide](src/README.md) for detailed usage.
 
 ## License
 
