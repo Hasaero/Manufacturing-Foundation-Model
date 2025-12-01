@@ -11,5 +11,5 @@ __all__ = [
     'clear_memory',
     'print_memory_stats',
     'save_checkpoint',
-    'safe_save_model'
+    'safe_save_model',
 ]
