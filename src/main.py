@@ -40,21 +40,14 @@ def main():
     # Set seed
     control_randomness(seed=config['seed'])
 
-    # Create output directory structure
+    # Create output directory structure (simplified)
     output_dir = Path(config['output_dir'])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create organized subdirectories for each experiment
-    for exp_name in ['soft_masking', 'sequential', 'baseline', 'comparison']:
-        exp_dir = output_dir / exp_name
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        if exp_name != 'comparison':
-            (exp_dir / 'metrics').mkdir(exist_ok=True)
-            (exp_dir / 'models').mkdir(exist_ok=True)
-            (exp_dir / 'visualizations').mkdir(exist_ok=True)
-        else:
-            (exp_dir / 'metrics').mkdir(exist_ok=True)
-            (exp_dir / 'visualizations').mkdir(exist_ok=True)
+    # Create simple subdirectories
+    (output_dir / 'metrics').mkdir(exist_ok=True)
+    (output_dir / 'visualizations').mkdir(exist_ok=True)
+    (output_dir / 'models').mkdir(exist_ok=True)
 
     # Save config
     with open(output_dir / "config.json", 'w') as f:
@@ -149,13 +142,13 @@ def main():
             manufacturing_datasets,
             config,
             device,
-            output_dir / "soft_masking"
+            output_dir
         )
 
         # Save soft-masking pretrain model weights
         safe_save_model(
             softmask_pretrain_model,
-            output_dir / "soft_masking" / "models" / "pretrained_weights.pt",
+            output_dir / "models" / "softmask_pretrained.pt",
             "Soft-masking pretrained model"
         )
 
@@ -222,7 +215,7 @@ def main():
         # Save soft-masking model and results
         safe_save_model(
             softmask_model,
-            output_dir / "soft_masking" / "models" / "finetuned_model.pt",
+            output_dir / "models" / "softmask_finetuned.pt",
             "Soft-masking model"
         )
         all_results['soft_masking'] = softmask_metrics
@@ -230,15 +223,15 @@ def main():
         # Save metrics to JSON (convert numpy types to native Python types)
         softmask_metrics_native = {k: float(v) if isinstance(v, (np.integer, np.floating)) else v
                                    for k, v in softmask_metrics.items()}
-        with open(output_dir / "soft_masking" / "metrics" / "test_metrics.json", 'w') as f:
+        with open(output_dir / "metrics" / "softmask_metrics.json", 'w') as f:
             json.dump(softmask_metrics_native, f, indent=2)
 
         # Create prediction visualizations
         create_all_prediction_visualizations(
             softmask_preds,
             softmask_trues,
-            output_dir / "soft_masking" / "visualizations",
-            "Soft-Masking CL"
+            output_dir / "visualizations",
+            "softmask"
         )
 
         # Clean up
@@ -279,13 +272,13 @@ def main():
             manufacturing_datasets,
             config,
             device,
-            output_dir / "sequential"
+            output_dir
         )
 
         # Save sequential pretrain model weights
         safe_save_model(
             sequential_pretrain_model,
-            output_dir / "sequential" / "models" / "pretrained_weights.pt",
+            output_dir / "models" / "sequential_pretrained.pt",
             "Sequential pretrained model"
         )
 
@@ -352,7 +345,7 @@ def main():
         # Save sequential model and results
         safe_save_model(
             sequential_model,
-            output_dir / "sequential" / "models" / "finetuned_model.pt",
+            output_dir / "models" / "sequential_finetuned.pt",
             "Sequential model"
         )
         all_results['sequential'] = sequential_metrics
@@ -360,15 +353,15 @@ def main():
         # Save metrics to JSON (convert numpy types to native Python types)
         sequential_metrics_native = {k: float(v) if isinstance(v, (np.integer, np.floating)) else v
                                      for k, v in sequential_metrics.items()}
-        with open(output_dir / "sequential" / "metrics" / "test_metrics.json", 'w') as f:
+        with open(output_dir / "metrics" / "sequential_metrics.json", 'w') as f:
             json.dump(sequential_metrics_native, f, indent=2)
 
         # Create prediction visualizations
         create_all_prediction_visualizations(
             sequential_preds,
             sequential_trues,
-            output_dir / "sequential" / "visualizations",
-            "Sequential CL"
+            output_dir / "visualizations",
+            "sequential"
         )
 
         # Clean up
@@ -436,7 +429,7 @@ def main():
         # Save baseline model and results
         safe_save_model(
             baseline_model,
-            output_dir / "baseline" / "models" / "finetuned_model.pt",
+            output_dir / "models" / "baseline_finetuned.pt",
             "Baseline model"
         )
         all_results['baseline'] = baseline_metrics
@@ -444,15 +437,15 @@ def main():
         # Save metrics to JSON (convert numpy types to native Python types)
         baseline_metrics_native = {k: float(v) if isinstance(v, (np.integer, np.floating)) else v
                                    for k, v in baseline_metrics.items()}
-        with open(output_dir / "baseline" / "metrics" / "test_metrics.json", 'w') as f:
+        with open(output_dir / "metrics" / "baseline_metrics.json", 'w') as f:
             json.dump(baseline_metrics_native, f, indent=2)
 
         # Create prediction visualizations
         create_all_prediction_visualizations(
             baseline_preds,
             baseline_trues,
-            output_dir / "baseline" / "visualizations",
-            "Baseline"
+            output_dir / "visualizations",
+            "baseline"
         )
 
         # Clean up
@@ -505,10 +498,10 @@ def main():
 
         # Save results to JSON
         comparison_native = convert_to_native(all_results)
-        with open(output_dir / 'comparison' / 'metrics' / 'comparison_results.json', 'w') as f:
+        with open(output_dir / 'metrics' / 'comparison_results.json', 'w') as f:
             json.dump(comparison_native, f, indent=2)
 
-        print(f"\nComparison results saved to {output_dir / 'comparison' / 'metrics' / 'comparison_results.json'}")
+        print(f"\nComparison results saved to {output_dir / 'metrics' / 'comparison_results.json'}")
     else:
         print("\nNo experiments were run. Enable experiments in config.")
 
@@ -539,8 +532,8 @@ def main():
                        ha='center', va='bottom', fontsize=8)
 
         plt.tight_layout()
-        plt.savefig(output_dir / "comparison" / "visualizations" / "metrics_comparison.png", dpi=150)
-        print(f"\nMetrics comparison saved to {output_dir / 'comparison' / 'visualizations' / 'metrics_comparison.png'}")
+        plt.savefig(output_dir / "visualizations" / "metrics_comparison.png", dpi=150)
+        print(f"\nMetrics comparison saved to {output_dir / 'visualizations' / 'metrics_comparison.png'}")
 
     # ========================================================================
     # Generate Continual Learning Visualizations
@@ -549,54 +542,14 @@ def main():
     print("GENERATING CONTINUAL LEARNING VISUALIZATIONS")
     print("=" * 80)
 
-    # Generate CL visualizations for each experiment that used continual learning
-    cl_experiment_dirs = {}
-
-    if config.get('run_sequential', False):
-        seq_dir = output_dir / "sequential"
-        if (seq_dir / "metrics" / "continual_learning_metrics_matrix.csv").exists():
-            cl_experiment_dirs['Sequential'] = str(seq_dir)
-            print(f"\nGenerating visualizations for Sequential CL experiment...")
-            create_all_cl_visualizations(str(seq_dir))
-
-    if config.get('run_soft_masking', False):
-        softmask_dir = output_dir / "soft_masking"
-        if (softmask_dir / "metrics" / "continual_learning_metrics_matrix.csv").exists():
-            cl_experiment_dirs['Soft-Masking'] = str(softmask_dir)
-            print(f"\nGenerating visualizations for Soft-Masking CL experiment...")
-            create_all_cl_visualizations(str(softmask_dir))
-
-    # Compare CL metrics across experiments
-    if len(cl_experiment_dirs) >= 2:
-        print(f"\nComparing continual learning metrics across experiments...")
-        compare_cl_metrics_across_experiments(
-            cl_experiment_dirs,
-            save_path=str(output_dir / "comparison" / "visualizations" / "cl_metrics_comparison.png")
-        )
-
-    if len(cl_experiment_dirs) > 0:
-        print("\n" + "-" * 80)
-        print("CONTINUAL LEARNING VISUALIZATIONS GENERATED:")
-        print("-" * 80)
-        print("For each CL experiment:")
-        print("  - cl_performance_matrix.png: Heatmap showing forgetting patterns")
-        print("  - cl_forgetting_evolution.png: Performance evolution and forgetting per domain")
-        if len(cl_experiment_dirs) >= 2:
-            print("\nCross-experiment comparison:")
-            print("  - cl_metrics_comparison.png: Compare BWT, Forgetting, and Performance")
-        print("-" * 80)
+    # Check if CL metrics exist
+    cl_metrics_path = output_dir / "metrics" / "continual_learning_metrics_matrix.csv"
+    if cl_metrics_path.exists():
+        print(f"\nGenerating CL visualizations...")
+        create_all_cl_visualizations(str(output_dir))
+        print("\nCL visualizations saved to visualizations/")
     else:
-        print("\nNo continual learning experiments were run.")
-        print("Enable run_sequential or run_soft_masking to see CL visualizations.")
-
-    # ========================================================================
-    # Generate Experiment Comparisons (MSE, Forgetting across models)
-    # ========================================================================
-    if len(cl_experiment_dirs) >= 2:
-        print("\n" + "=" * 80)
-        print("GENERATING CROSS-EXPERIMENT COMPARISONS")
-        print("=" * 80)
-        create_all_experiment_comparisons(str(output_dir))
+        print("\nNo continual learning metrics found.")
 
 
 if __name__ == "__main__":

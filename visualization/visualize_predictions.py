@@ -235,7 +235,10 @@ def plot_error_distribution(all_preds, all_trues, save_path, domain_name):
 
 
 def create_all_prediction_visualizations(all_preds, all_trues, output_dir, domain_name):
-    """Create all prediction-related visualizations.
+    """Create prediction visualizations.
+
+    Only creates time series comparison plot (pred vs actual).
+    Scatter and error distribution plots are disabled to reduce output files.
 
     Args:
         all_preds: Predictions array [batch, channels, forecast_horizon]
@@ -248,26 +251,12 @@ def create_all_prediction_visualizations(all_preds, all_trues, output_dir, domai
 
     print(f"\nCreating prediction visualizations for {domain_name}...")
 
-    # 1. Time series comparison plot
+    # Time series comparison plot only
     plot_prediction_vs_actual(
         all_preds, all_trues,
-        output_path / f'pred_vs_actual_timeseries_{domain_name}.png',
+        output_path / f'pred_vs_actual_{domain_name}.png',
         domain_name,
         n_samples=5
     )
 
-    # 2. Scatter plot
-    plot_scatter_prediction_vs_actual(
-        all_preds, all_trues,
-        output_path / f'pred_vs_actual_scatter_{domain_name}.png',
-        domain_name
-    )
-
-    # 3. Error distribution
-    plot_error_distribution(
-        all_preds, all_trues,
-        output_path / f'error_distribution_{domain_name}.png',
-        domain_name
-    )
-
-    print(f"All prediction visualizations saved to {output_path}")
+    print(f"Prediction visualization saved to {output_path}")

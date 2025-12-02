@@ -227,46 +227,43 @@ def create_all_experiment_comparisons(output_dir):
     """Create all comparison visualizations for experiments.
 
     Args:
-        output_dir: Base output directory containing experiment subdirectories
+        output_dir: Base output directory (simplified structure)
     """
     output_path = Path(output_dir)
+    metrics_dir = output_path / "metrics"
+    vis_dir = output_path / "visualizations"
 
-    # Define experiment directories
-    experiment_dirs = {}
-
-    for exp_name in ['soft_masking', 'sequential']:
-        exp_dir = output_path / exp_name
-        if (exp_dir / "metrics" / "continual_learning_metrics_matrix.csv").exists():
-            experiment_dirs[exp_name.replace('_', ' ').title()] = str(exp_dir)
-
-    if len(experiment_dirs) < 2:
-        print("Need at least 2 experiments with CL metrics for comparison")
+    # Check if CL metrics exist
+    cl_matrix_path = metrics_dir / "continual_learning_metrics_matrix.csv"
+    if not cl_matrix_path.exists():
+        print("No continual learning metrics found for comparison")
         return
 
-    # Create comparison directory
-    comparison_dir = output_path / "comparison" / "visualizations"
-    comparison_dir.mkdir(parents=True, exist_ok=True)
+    vis_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 80)
     print("CREATING EXPERIMENT COMPARISONS")
     print("=" * 80)
 
+    # For simplified structure, use single experiment dir
+    experiment_dirs = {'Experiment': str(output_path)}
+
     # Generate MSE comparison
     print("\nGenerating domain MSE comparison...")
     compare_domain_mse_across_experiments(
         experiment_dirs,
-        str(comparison_dir / "domain_mse_comparison.png")
+        str(vis_dir / "domain_mse_comparison.png")
     )
 
     # Generate forgetting comparison
     print("\nGenerating forgetting comparison...")
     compare_forgetting_across_experiments(
         experiment_dirs,
-        str(comparison_dir / "forgetting_comparison.png")
+        str(vis_dir / "forgetting_comparison.png")
     )
 
     print("\n" + "-" * 80)
-    print(f"All comparison visualizations saved to {comparison_dir}")
+    print(f"All comparison visualizations saved to {vis_dir}")
     print("-" * 80)
 
 

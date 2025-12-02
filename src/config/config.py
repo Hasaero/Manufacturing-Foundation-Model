@@ -15,13 +15,13 @@ DEFAULT_CONFIG = {
     "target_column": "SATURATOR_ML_SUPPLY_F_PV.Value",
 
     # Model settings
-    "model_name": "AutonLab/MOMENT-1-base",
+    "model_name": "AutonLab/MOMENT-1-small",
     "context_length": 512,
     "forecast_horizon": 6,
 
     # Continual pretraining settings (MOMENT official settings)
-    "pretrain_epochs": 10,
-    "pretrain_batch_size": 64,
+    "pretrain_epochs": 1,
+    "pretrain_batch_size": 128,
     "pretrain_lr": 1e-4,  # init_lr
     "pretrain_min_lr": 1e-5,  # min_lr
     "pretrain_warmup_lr": 1e-5,  # warmup_lr
@@ -34,9 +34,20 @@ DEFAULT_CONFIG = {
     "pretrain_max_opt_steps": 5000000,
     "mask_ratio": 0.3,
 
+    # Experiment modes - Enable/disable different experiments
+    "run_baseline": True,  # Baseline: No continual learning (train on all datasets mixed)
+    "run_sequential": True,  # Sequential: Continual learning WITHOUT Soft-Masking
+    "run_soft_masking": True,  # Soft-Masking: Continual learning WITH Soft-Masking
+
+    # Soft-Masking continual learning settings
+    "use_soft_masking": True,  # Enable Soft-Masking for continual learning (used when run_soft_masking=True)
+    "layer_to_mask": ["head", "mlp"],  # Layer types to apply gradient masking
+    "importance_samples": 1000,  # Number of samples for computing importance
+    "compute_cl_metrics": True,  # Compute continual learning metrics (BWT, FWT, Forgetting)
+
     # Forecasting fine-tuning settings (MOMENT official settings)
-    "finetune_epochs": 5,
-    "finetune_batch_size": 32,
+    "finetune_epochs": 1,
+    "finetune_batch_size": 64,
     "finetune_lr": 5e-5,  # init_lr
     "finetune_lr_scheduler": "onecyclelr",
     "finetune_pct_start": 0.3,  # Percentage of cycle spent increasing LR
@@ -57,7 +68,7 @@ DEFAULT_CONFIG = {
     "auto_reduce_batch_on_oom": True,
     "save_checkpoints": False,
 
-    "output_dir": "/home/juyoung_ha/MFM/results/continual_pretrain_results",
+    "output_dir": "/home/juyoung_ha/MFM/results",
 }
 
 

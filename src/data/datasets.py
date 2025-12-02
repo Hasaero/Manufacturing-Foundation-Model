@@ -204,7 +204,7 @@ class MOMENTDatasetWrapper(Dataset):
         # Transpose to [n_features, seq_len] for MOMENT
         context = torch.FloatTensor(seq_x.T)  # [n_features, seq_len]
         forecast = torch.FloatTensor(seq_y.T)  # [n_features, pred_len]
-
+        # batch_size x channel x patch_len
         # Create input mask (all ones - no masking)
         input_mask = torch.ones(seq_x.shape[0])  # [seq_len]
 

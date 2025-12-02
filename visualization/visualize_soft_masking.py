@@ -9,8 +9,8 @@ from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 import seaborn as sns
 from pathlib import Path
 
-# Output directory
-OUTPUT_DIR = Path("/home/juyoung_ha/MFM/results")
+# Output directory (relative to project root)
+OUTPUT_DIR = Path(__file__).parent.parent / "results" / "visualizations"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Set style

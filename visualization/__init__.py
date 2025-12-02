@@ -9,8 +9,6 @@ from .visualize_cl_metrics import (
 
 from .visualize_predictions import (
     plot_prediction_vs_actual,
-    plot_scatter_prediction_vs_actual,
-    plot_error_distribution,
     create_all_prediction_visualizations
 )
 
@@ -28,8 +26,6 @@ __all__ = [
     'create_all_cl_visualizations',
     # Prediction visualization
     'plot_prediction_vs_actual',
-    'plot_scatter_prediction_vs_actual',
-    'plot_error_distribution',
     'create_all_prediction_visualizations',
     # Experiment comparison
     'compare_domain_mse_across_experiments',

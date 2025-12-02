@@ -18,6 +18,18 @@ from utils import (
     print_memory_stats,
     save_checkpoint
 )
+from training.importance import (
+    compute_importance,
+    impt_norm,
+    mask_gradients,
+    visualize_all_domains_head_importance
+)
+from training.cl_metrics import (
+    PerformanceMatrix,
+    compute_all_metrics,
+    print_metrics_summary,
+    save_metrics_to_csv
+)
 
 
 class LinearWarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
@@ -51,7 +63,7 @@ class LinearWarmupCosineAnnealingLR(torch.optim.lr_scheduler._LRScheduler):
                     for base_lr in self.base_lrs]
 
 
-def continual_pretrain(model, datasets, config, device, output_dir):
+def continual_pretrain(model, datasets, config, device, output_dir, callback=None):
     """Continual pretraining with masking and reconstruction
 
     Follows MOMENT official implementation:
@@ -60,6 +72,14 @@ def continual_pretrain(model, datasets, config, device, output_dir):
     - Mixed precision training (AMP)
     - Gradient clipping
     - Domain sequential training (one dataset at a time)
+
+    Args:
+        model: MOMENT model instance
+        datasets: List of datasets for continual learning
+        config: Training configuration dictionary
+        device: torch device
+        output_dir: Output directory for saving models and metrics
+        callback: Optional StreamlitTrainingCallback for real-time monitoring
     """
     print("\n" + "=" * 80)
     print("CONTINUAL PRETRAINING (Masking & Reconstruction)")
@@ -132,15 +152,48 @@ def continual_pretrain(model, datasets, config, device, output_dir):
     print(f"  Total Datasets: {len(datasets)}")
     print(f"\n  Training Order: Domain Sequential (Dataset 1 → Dataset 2 → Dataset 3)")
 
+    # Soft-Masking setup
+    use_soft_masking = config.get('use_soft_masking', False)
+    layer_to_mask = config.get('layer_to_mask', ['head', 'mlp'])
+    importance_samples = config.get('importance_samples', 1000)
+    compute_cl_metrics = config.get('compute_cl_metrics', True)
+
+    if use_soft_masking:
+        print(f"\n  Soft-Masking Enabled:")
+        print(f"    Layers to Mask: {layer_to_mask}")
+        print(f"    Importance Samples: {importance_samples}")
+
+    # Continual learning metrics setup
+    perf_matrix = PerformanceMatrix() if compute_cl_metrics else None
+    domain_names = [f"Dataset_{i+1}" for i in range(len(datasets))]
+
+    # Track importance in memory (no file saving)
+    accumulated_head_impt = None
+    accumulated_mlp_impt = None
+    all_head_impts = []  # Store normalized importance for each domain
+    all_mlp_impts = []
+
+    # Initialize callback if provided
+    if callback is not None:
+        callback.set_total(config['pretrain_epochs'], len(datasets))
+
     # Domain sequential training: Train completely on Dataset 1, then Dataset 2, then Dataset 3
     for dataset_idx, dataset_data in enumerate(datasets):
         print(f"\n{'='*80}")
         print(f"DATASET {dataset_idx + 1}/{len(datasets)}")
         print(f"{'='*80}")
 
+        # Callback: domain start
+        if callback is not None:
+            callback.on_domain_start(dataset_idx, f"Dataset_{dataset_idx + 1}")
+
         # Train on this dataset for all epochs
         for epoch in range(config['pretrain_epochs']):
             print(f"\n  Epoch {epoch + 1}/{config['pretrain_epochs']} (Dataset {dataset_idx + 1})")
+
+            # Callback: epoch start
+            if callback is not None:
+                callback.on_epoch_start(epoch)
 
             epoch_losses = []
             oom_count = 0
@@ -244,6 +297,10 @@ def continual_pretrain(model, datasets, config, device, output_dir):
 
                             # Update weights every accumulation_steps
                             if (batch_idx + 1) % accumulation_steps == 0:
+                                # CRITICAL FIX: Apply Soft-Masking ONCE before optimizer.step()
+                                # Don't apply after every backward() to avoid repeated masking
+                                if use_soft_masking and (accumulated_head_impt is not None or accumulated_mlp_impt is not None):
+                                    mask_gradients(model, accumulated_head_impt, accumulated_mlp_impt, layer_to_mask)
                                 # Get current learning rate
                                 current_lr = optimizer.param_groups[0]['lr']
 
@@ -335,8 +392,19 @@ def continual_pretrain(model, datasets, config, device, output_dir):
             print(f"  Epoch {epoch + 1}/{config['pretrain_epochs']} (Dataset {dataset_idx + 1}) Average Loss: {avg_epoch_loss:.6f}")
             print(f"  Current LR: {current_epoch_lr:.6f} (Step: {global_step})")
 
+            # Callback: epoch end
+            if callback is not None:
+                callback.on_epoch_end(
+                    epoch=epoch,
+                    train_loss=avg_epoch_loss,
+                    val_loss=None,  # No validation in pretraining
+                    lr=current_epoch_lr
+                )
+
             if oom_count > 0:
                 print(f"  OOM events this epoch: {oom_count}")
+                if callback is not None:
+                    callback.on_oom(retry_batch_size)
 
             print_memory_stats(f"  After Epoch {epoch + 1} (Dataset {dataset_idx + 1}) ")
 
@@ -347,16 +415,142 @@ def continual_pretrain(model, datasets, config, device, output_dir):
 
             clear_memory()
 
+        # Dataset completion: Compute importance for this domain
+        if use_soft_masking:
+            print(f"\n{'='*80}")
+            print(f"COMPUTING IMPORTANCE FOR DATASET {dataset_idx + 1}")
+            print(f"{'='*80}")
+
+            # Create a small dataloader for importance computation
+            importance_dataset = PretrainDataset(dataset_data, config['context_length'])
+            importance_loader = DataLoader(
+                importance_dataset,
+                batch_size=config['pretrain_batch_size'],
+                shuffle=True
+            )
+
+            # Compute importance using subset of data
+            head_impt, mlp_impt = compute_importance(
+                model=model,
+                dataloader=importance_loader,
+                device=device,
+                criterion=criterion,
+                max_samples=importance_samples
+            )
+
+            # Normalize and store importance in memory
+            head_impt_norm = impt_norm(head_impt)
+            mlp_impt_norm = impt_norm(mlp_impt)
+            all_head_impts.append(head_impt_norm)
+            all_mlp_impts.append(mlp_impt_norm)
+
+            # Accumulate importance from PREVIOUS domains (not current)
+            if dataset_idx > 0:
+                # Stack previous domains and take MAX
+                prev_head = torch.stack(all_head_impts[:-1])
+                prev_mlp = torch.stack(all_mlp_impts[:-1])
+                accumulated_head_impt, _ = prev_head.max(0)
+                accumulated_mlp_impt, _ = prev_mlp.max(0)
+                print(f"Accumulated importance from {dataset_idx} previous domains")
+                print(f"  Head mask usage: {accumulated_head_impt.mean().item():.4f}")
+                print(f"  MLP mask usage: {accumulated_mlp_impt.mean().item():.4f}")
+            else:
+                accumulated_head_impt = None
+                accumulated_mlp_impt = None
+                print(f"First domain - no previous domains to protect")
+
+            print(f"Importance computation complete for {domain_names[dataset_idx]}")
+
+        # Evaluate on all previous domains for continual learning metrics
+        if compute_cl_metrics and perf_matrix is not None:
+            print(f"\n{'='*80}")
+            print(f"EVALUATING ON ALL DOMAINS AFTER DATASET {dataset_idx + 1}")
+            print(f"{'='*80}")
+
+            model.eval()
+            with torch.no_grad():
+                for eval_idx in range(dataset_idx + 1):
+                    eval_dataset = PretrainDataset(datasets[eval_idx], config['context_length'])
+                    eval_loader = DataLoader(
+                        eval_dataset,
+                        batch_size=config['pretrain_batch_size'],
+                        shuffle=False
+                    )
+
+                    eval_losses = []
+                    for batch_x, input_mask in eval_loader:
+                        try:
+                            batch_x = batch_x.float().to(device)
+                            input_mask = input_mask.long().to(device)
+
+                            batch_size, n_channels, seq_len = batch_x.shape
+                            batch_x_reshaped = batch_x.reshape(-1, 1, seq_len)
+                            input_mask_reshaped = input_mask.repeat_interleave(n_channels, dim=0)
+
+                            output = model(
+                                x_enc=batch_x_reshaped,
+                                input_mask=input_mask_reshaped,
+                                mask=None
+                            )
+
+                            reconstruction = output.reconstruction.reshape(batch_size, n_channels, seq_len)
+                            recon_loss = criterion(reconstruction, batch_x)
+
+                            # Simple mean loss for evaluation
+                            eval_loss = recon_loss.mean()
+                            eval_losses.append(eval_loss.item())
+
+                            del batch_x, input_mask, output, reconstruction, eval_loss
+
+                        except RuntimeError as e:
+                            if "out of memory" in str(e):
+                                clear_memory()
+                                continue
+                            else:
+                                raise e
+
+                    avg_eval_loss = np.mean(eval_losses) if eval_losses else float('inf')
+                    perf_matrix.add_performance(dataset_idx, eval_idx, avg_eval_loss)
+                    print(f"  Domain {eval_idx + 1} Loss: {avg_eval_loss:.6f}")
+
+            model.train()
+            clear_memory()
+
         # Dataset completion summary
         print(f"\n{'='*80}")
         print(f"DATASET {dataset_idx + 1}/{len(datasets)} COMPLETED")
         print(f"{'='*80}\n")
 
+    # Continual learning summary
+    if compute_cl_metrics and perf_matrix is not None:
+        print(f"\n{'='*80}")
+        print(f"CONTINUAL LEARNING SUMMARY")
+        print(f"{'='*80}")
+
+        metrics = compute_all_metrics(perf_matrix, len(datasets))
+        print_metrics_summary(metrics, metric_name="MSE")
+
+        # Save metrics to CSV in metrics subdirectory
+        metrics_dir = output_dir / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        metrics_path = metrics_dir / "continual_learning_metrics.csv"
+        save_metrics_to_csv(perf_matrix, metrics, len(datasets), domain_names, str(metrics_path))
+
+    # Save head importance comparison visualization (single plot with all domains)
+    if use_soft_masking and len(all_head_impts) > 0:
+        vis_dir = output_dir / "visualizations"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\nCreating importance visualization for {len(all_head_impts)} domains: {domain_names[:len(all_head_impts)]}")
+        visualize_all_domains_head_importance(
+            all_head_impts, domain_names[:len(all_head_impts)],
+            vis_dir / "head_importance_comparison.png"
+        )
+
     print("\nContinual pretraining completed!")
     return model
 
 
-def train_forecasting(model, train_loader, val_loader, config, device, target_idx, output_dir, model_name="forecasting"):
+def train_forecasting(model, train_loader, val_loader, config, device, target_idx, output_dir, model_name="forecasting", callback=None):
     """Fine-tune forecasting head
 
     Follows MOMENT official implementation:
@@ -364,6 +558,17 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
     - Mixed precision training (AMP)
     - Gradient clipping
     - Early stopping based on validation loss
+
+    Args:
+        model: MOMENT model instance
+        train_loader: Training data loader
+        val_loader: Validation data loader
+        config: Training configuration dictionary
+        device: torch device
+        target_idx: Target variable index
+        output_dir: Output directory for saving models
+        model_name: Name for saved model file
+        callback: Optional StreamlitTrainingCallback for real-time monitoring
     """
     print("\n" + "=" * 80)
     print("FORECASTING FINE-TUNING")
@@ -410,6 +615,10 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
     best_model_state = None
     oom_count = 0
     opt_steps = 0  # Global step counter (MOMENT official pattern)
+
+    # Initialize callback if provided
+    if callback is not None:
+        callback.set_total(config['finetune_epochs'], 1)
 
     # Evaluate model before training (MOMENT official pattern)
     print("\n" + "-" * 80)
@@ -552,8 +761,19 @@ def train_forecasting(model, train_loader, val_loader, config, device, target_id
         print(f"  Val Loss:   {val_loss:.6f}")
         print(f"  LR:         {current_lr:.6e}")
 
+        # Callback: epoch end
+        if callback is not None:
+            callback.on_epoch_end(
+                epoch=epoch,
+                train_loss=train_loss,
+                val_loss=val_loss,
+                lr=current_lr
+            )
+
         if oom_count > 0:
             print(f"  OOM events this epoch: {oom_count}")
+            if callback is not None:
+                callback.on_oom()
             oom_count = 0  # Reset for next epoch
 
         print_memory_stats(f"  After Epoch {epoch + 1} ")
